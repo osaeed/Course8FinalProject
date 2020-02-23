@@ -1,0 +1,142 @@
+---
+title: "WeightLiftingAnalysis"
+author: "Omer Saeed"
+date: "2/22/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+This is the submission for the final project for the "Pratical Machine Learning" course on Coursera.  
+
+The dataset for this project comes from the following:
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+http://web.archive.org/web/20161224072740/http:/groupware.les.inf.puc-rio.br/har
+
+In this project, we will attempt to build a model using a set of body activity measurements to predict the type of activity.
+
+We have a dataset of approximately 19K observations across 160 variables, including the predicted activity.  We will build the model using the observation dataset (pml-training.csv), and then use it to predict the activity of 20 observations in a validation dataset (pml-testing.csv).
+
+
+## Environment Setup and Data Loading
+
+We will be utilizing the caret package to build our models.  Since the activity type is a class variable, we will be utilizing some classification and regression methods to build a suitable model, namely Classification Trees (method=rpart), Random Forests (method=rf),  and Generalized Boosted Model (method=gbm), so we need to load the appropriate libraries.  We will aslo set our seed.
+
+```{r}
+library(caret)
+library(randomForest)
+library(gbm)
+library(rpart)
+set.seed (32343)
+rawObsData <- read.csv("/Users/omersaeed/Documents/datascience/coursera/datascience/course8/pml-training.csv")
+rawValidationData <- read.csv("/Users/omersaeed/Documents/datascience/coursera/datascience/course8/pml-testing.csv")
+```
+
+## Data Exploration and Cleansing
+
+The observation and validation datasets have the same columns in the same sequence, just differing in the very last column, which contains the actual activity (classe) in the observation dataset.
+
+After inspecting the datasets, there are many columns with blank / NA data.  Additionally, the first 7 columns in each dataset contain identifying and dates of the observation, not any measurements, so we can exclude them as we build our model. 
+
+```{r}
+rawObsClean <- rawObsData[c(8:11, 37:49,60:68,84:86,102,113:124,140,151:160)]
+rawValidationClean <- rawValidationData[c(8:11, 37:49,60:68,84:86,102,113:124,140,151:159)]
+```
+
+Next we run a correlation matrix on the remaining variables to see which ones are highly correlated and can be excluded.
+
+```{r}
+M <- abs(cor(subset(rawObsClean, select=-c(classe))))
+diag(M) <- 0
+which(M > 0.8, arr.ind=T)
+```
+
+With the results, we see 8 distinct groups of highly correleated variables.  To simplify our model, we will take one variable from each of these groups.  In addition to these variables, we want to have some representation of the same type of movement for each of the 4 measurement sites, so we will choose to include roll and pitch for each, giving us a total of 13 variables that we will use in our model
+
+roll_belt
+pitch_belt
+roll_arm
+pitch_arm
+roll_dumbbell
+pitch_dumbbell
+roll_forearm
+pitch_forearm
+gyros_arm_x
+magnet_arm_x
+magnet_arm_y
+yaw_dumbbell
+gyros_forearm_z
+
+We will also split the observation data into a 70% training set and a 30% testing set.
+
+```{r}
+
+obsColumns <- c("roll_belt","pitch_belt","roll_arm","pitch_arm","roll_dumbbell","pitch_dumbbell","roll_forearm","pitch_forearm","gyros_arm_x","magnet_arm_x","magnet_arm_y","yaw_dumbbell","gyros_forearm_z", "classe")
+
+validationColumns <- c("roll_belt","pitch_belt","roll_arm","pitch_arm","roll_dumbbell","pitch_dumbbell","roll_forearm","pitch_forearm","gyros_arm_x","magnet_arm_x","magnet_arm_y","yaw_dumbbell","gyros_forearm_z")
+
+finalObsData <- rawObsClean[obsColumns]
+validationData <- rawValidationData[validationColumns]
+
+trainingIndex <- createDataPartition(finalObsData$classe, p=0.7, list = FALSE)
+trainingData <- finalObsData[trainingIndex,]
+testingData <- finalObsData[-trainingIndex,]
+
+```
+
+## Model Building
+
+We will build 3 models
+1.  Classification Tree
+2.  Random Forest
+3.  Generalized Boosted Model
+
+Each model will use cross validation as it is built.  We will look at the each model and the confusion matrix against the test set to try to pick a winning model.  We will preprocess the data by centering and scaling it.  Since we are doing a classification ,the metric will be "Accuracy".
+
+### Classification Tree
+
+```{r}
+modelFitRPart <- train(classe ~., data = trainingData, preProcess = c("center", "scale"), method="rpart", metric="Accuracy", trControl = trainControl(method="cv", number=5), tuneLength=20)
+rPartPrediction <- predict(modelFitRPart, testingData)
+cmRPart <- confusionMatrix(rPartPrediction, testingData$classe)
+print(cmRPart)
+```
+
+We see that the model is not very accurate in classifying the test data (Accuracy = 0.7415).
+
+### Random Forest
+
+```{r}
+modelFitRF <- train(classe ~., data = trainingData, preProcess = c("center", "scale"), method="rf", metric="Accuracy", trControl = trainControl(method="cv", number=5))
+rfPrediction <- predict(modelFitRF, testingData)
+cmRF <- confusionMatrix(rfPrediction, testingData$classe)
+print(cmRF)
+```
+
+We see that the model is relatively accurate in classifying the test data (Accuracy = 0.9891).
+
+### Generalized Boosted Model
+
+```{r}
+modelFitGBM <- train(classe ~., data = trainingData, preProcess = c("center", "scale"), method="gbm", metric="Accuracy", trControl = trainControl(method="cv", number=5), verbose=FALSE)
+gbmPrediction <- predict(modelFitGBM, testingData)
+cmGBM <- confusionMatrix(gbmPrediction, testingData$classe)
+print(cmGBM)
+```
+
+We see that the model is relatively accurate in classifying the test data (Accuracy = 0.9169).
+
+## Model Selection and Validation Prediction
+Although we took a crude approach with selecting our variables and with setting up our models, we ended up with a relatively accurate Random Forest model.  Thus, we will utilize the Random Forest model to predict the activities for the validation data set.
+
+```{r}
+validationPrediction <- predict(modelFitRF, validationData)
+print(validationPrediction)
+```
+
+We could have chosen a differnt mix of variables (e.g. using PCA), and we could have further reduced error / increased accuracy by using model blending, but our chosen model has a high degree of accuracy for our purpose.
